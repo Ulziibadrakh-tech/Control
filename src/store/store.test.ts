@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   dispatch,
   fixedEnv,
+  has,
   hydrate,
+  listView,
+  nextSteps,
   people,
+  planOf,
   preview,
   promotionHint,
   published,
   roleOf,
-  listView,
   type PersonId,
   type Workspace,
 } from '../core';
@@ -27,7 +30,7 @@ const byName = (ws: Workspace, name: string): PersonId => {
 describe('sample history', () => {
   it('replays under the real rules, in both languages', () => {
     for (const lang of ['en', 'mn'] as const) {
-      const ws = sampleWorkspace(lang, NOW);
+      const ws = sampleWorkspace('home', lang, NOW);
       expect(people(ws).length).toBe(5);
       expect(ws.replay.head).toBeGreaterThan(40);
       expect(hydrate(ws.data).replay.state.tasks.size).toBe(published(ws).tasks.size);
@@ -35,7 +38,7 @@ describe('sample history', () => {
   });
 
   it('tells the intended story', () => {
-    const ws = sampleWorkspace('en', NOW);
+    const ws = sampleWorkspace('home', 'en', NOW);
     const saraa = byName(ws, 'Saraa');
     const bat = byName(ws, 'Bat');
     const dulmaa = byName(ws, 'Dulmaa');
@@ -49,19 +52,80 @@ describe('sample history', () => {
     expect(view.doneToday.map((r) => r.text).sort()).toEqual(['Buy bread', 'Take morning pills']);
     expect(view.open.some((r) => r.pendingAdd !== null && r.text === 'Buy kefir')).toBe(true);
     expect(view.open.find((r) => r.text === 'Call about the radio')?.notes.length).toBe(1);
-    expect(roleOf(ws.replay.state.people.get(bat)!.perms)).toBe('custom');
+    expect(roleOf(ws.replay.state.people.get(bat)!.perms, 'home')).toBe('custom');
   });
 
   it('never puts anything in the future, even just after midnight', () => {
     const justAfterMidnight = new Date(2026, 9, 4, 0, 3).getTime();
-    const ws = sampleWorkspace('en', justAfterMidnight);
+    const ws = sampleWorkspace('home', 'en', justAfterMidnight);
     expect(Math.max(...ws.data.log.map((v) => v.at))).toBeLessThan(justAfterMidnight);
+  });
+});
+
+describe('school sample', () => {
+  it('replays under the real rules, in both languages, even just after midnight', () => {
+    for (const lang of ['en', 'mn'] as const) {
+      const ws = sampleWorkspace('school', lang, NOW);
+      expect(people(ws).length).toBe(8);
+      expect(ws.data.standard).toBe('school');
+      expect(hydrate(ws.data).replay.state.steps.size).toBe(published(ws).steps.size);
+    }
+    const early = new Date(2026, 9, 4, 0, 3).getTime();
+    const ws = sampleWorkspace('school', 'en', early);
+    expect(Math.max(...ws.data.log.map((v) => v.at))).toBeLessThan(early);
+  });
+
+  it('tells the intended story', () => {
+    const ws = sampleWorkspace('school', 'en', NOW);
+    const [director, manager, saraa, tuya, anu, khulan, nomin, dorj] = [
+      'Oyunchimeg',
+      'Bat-Erdene',
+      'Saraa',
+      'Tuya',
+      'Anu',
+      'Khulan',
+      'Nomin',
+      'Dorj',
+    ].map((n) => byName(ws, n));
+    for (const [id, role] of [
+      [director, 'director'],
+      [manager, 'manager'],
+      [saraa, 'teacher'],
+      [anu, 'student'],
+      [dorj, 'parent'],
+    ] as const)
+      expect(roleOf(ws.replay.state.people.get(id!)!.perms, 'school')).toBe(role);
+
+    // Everyone has something sensible to do now, or is waiting for others.
+    const now = (id: PersonId) => nextSteps(ws, id).now.map((s) => s.step.text);
+    expect(now(saraa!)).toEqual(expect.arrayContaining(['Hold the meeting', 'Pack the first-aid kit']));
+    expect(now(tuya!)).toContain('Print the papers');
+    expect(now(manager!)).toContain('Book the bus');
+    expect(now(anu!)).toEqual(['Do the homework']);
+    expect(now(nomin!)).toEqual(expect.arrayContaining(['Revise', 'Do the homework']));
+    expect(nextSteps(ws, tuya!).later.map((s) => s.step.text)).toContain('Hold the exam');
+
+    // Exam week runs in rounds; some steps wait.
+    const exam = [...published(ws).tasks.values()].find((t) => t.text === 'Exam week')!;
+    const plan = planOf(published(ws), exam);
+    expect(plan.height).toBe(5);
+    expect(plan.rounds[0]!.length).toBe(3);
+
+    // Strict control: students see only their part.
+    const anuView = listView(ws, anu!, NOW).open.map((r) => r.text);
+    expect(anuView).toContain('Reading homework: chapter 4');
+    expect(anuView).not.toContain('Parent meeting');
+    expect(anuView).not.toContain('Call the education office');
+    expect(has(ws.replay.state.people.get(anu!)!.perms, 'see')).toBe(false);
+
+    // A student's idea and a teacher's step for the director's plan are waiting together.
+    expect(new Set(ws.open?.batches.filter((b) => b.status === 'pending').map((b) => b.by))).toEqual(new Set([khulan, tuya]));
   });
 });
 
 describe('stored format', () => {
   it('round-trips exactly', () => {
-    const ws = sampleWorkspace('mn', NOW);
+    const ws = sampleWorkspace('home', 'mn', NOW);
     const stored = JSON.parse(JSON.stringify(encode(ws.data, 7, NOW)));
     const back = decode(stored);
     expect(back.ok).toBe(true);
@@ -72,8 +136,31 @@ describe('stored format', () => {
   });
 
   it('stores permissions as readable names', () => {
-    const ws = sampleWorkspace('en', NOW);
+    const ws = sampleWorkspace('home', 'en', NOW);
     expect(JSON.stringify(encode(ws.data, 1, NOW))).toContain('"suggest:remove"');
+  });
+
+  it('opens data saved by the first version as a home list where everyone still sees everything', () => {
+    const ws = sampleWorkspace('home', 'en', NOW);
+    // Make it look like schema 1: no standard, no "see", no "@own" atoms.
+    const v1 = JSON.parse(
+      JSON.stringify(encode(ws.data, 3, NOW), (k, v) =>
+        Array.isArray(v) && v.every((a) => typeof a === 'string') && (k === 'perms' || k === 'from' || k === 'to')
+          ? v.filter((a: string) => a !== 'see' && !a.endsWith('@own'))
+          : v,
+      ),
+    );
+    v1.schema = 1;
+    delete v1.workspace.standard;
+    const back = decode(v1);
+    expect(back.ok).toBe(true);
+    if (back.ok) expect(back.value.data).toEqual(ws.data);
+  });
+
+  it('round-trips a school with plans exactly', () => {
+    const ws = sampleWorkspace('school', 'mn', NOW);
+    const back = decode(JSON.parse(JSON.stringify(encode(ws.data, 2, NOW))));
+    expect(back.ok && back.value.data).toEqual(ws.data);
   });
 
   it('reports invalid data with where it went wrong', () => {
@@ -89,7 +176,7 @@ describe('stored format', () => {
 });
 
 describe('local store', () => {
-  const seed = () => sampleWorkspace('en', NOW);
+  const seed = () => sampleWorkspace('home', 'en', NOW);
   const quiet = () => {};
 
   it('starts from the sample when nothing is saved, and saves it', () => {
@@ -193,7 +280,7 @@ describe('local store', () => {
     const a = createLocalStore({ key: 'k', storage, seed, warn: quiet });
     const b = createLocalStore({ key: 'k', storage, seed, warn: quiet });
     a.transact(addAs('From A'));
-    b.replace(sampleWorkspace('en', NOW));
+    b.replace(sampleWorkspace('home', 'en', NOW));
     a.sync();
     expect(texts(a.get())).not.toContain('From A');
     a.transact(addAs('After'));

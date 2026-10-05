@@ -1,11 +1,13 @@
-/** A task, close up: change its words, tick it, remove it, and see its story. */
+/** A task, close up: change its words, tick it (or its plan's steps), remove it, and see its story. */
 import { Check, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
-import { cleanText, preview, published, routeAction, story, type TaskId } from '../../core';
+import { cleanText, preview, published, routeAction, stepsOf, story, type StepId, type TaskId } from '../../core';
 import { useI18n } from '../../i18n/react';
-import { useMe, useNow, useRun, useWords, useWorkspace } from '../context';
+import { useMe, useNow, useRun, useStandard, useWords, useWorkspace } from '../context';
 import { Avatar } from './bits';
+import { PlanView } from './PlanView';
 import { Sheet } from './Sheet';
+import { StepSheet } from './StepSheet';
 
 export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClose: () => void }) {
   const ws = useWorkspace();
@@ -13,14 +15,18 @@ export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClo
   const run = useRun();
   const now = useNow();
   const w = useWords();
+  const standard = useStandard();
   const { t, when } = useI18n();
   const fieldId = useId();
-  const edit = me ? routeAction(me.perms, 'edit') : 'deny';
+  const known = published(ws).tasks.get(id) ?? preview(ws).tasks.get(id);
+  const scope = known && me && known.createdBy === me.id ? 'own' : 'all';
+  const edit = me ? routeAction(me.perms, 'edit', scope) : 'deny';
   // People who may only suggest see (and build on) the list including what is waiting.
   const task = (edit === 'suggest' ? preview(ws) : published(ws)).tasks.get(id) ?? published(ws).tasks.get(id);
   const [base, setBase] = useState(task?.text ?? '');
   const [text, setText] = useState(task?.text ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<StepId | null>(null);
 
   // If the task disappears (removed here or in another tab), close.
   useEffect(() => {
@@ -36,8 +42,10 @@ export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClo
 
   if (!task || !me) return null;
 
-  const check = routeAction(me.perms, 'check');
-  const remove = routeAction(me.perms, 'remove');
+  const hasSteps = stepsOf(published(ws), task.id).length > 0;
+  const isPublished = published(ws).tasks.has(task.id);
+  const check = routeAction(me.perms, 'check', scope);
+  const remove = routeAction(me.perms, 'remove', scope);
   const changed = cleanText(text) !== task.text;
   const tale = story(ws, id, now);
 
@@ -54,7 +62,8 @@ export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClo
     : t(check === 'do' ? 'task.done' : 'task.doneSuggest');
 
   return (
-    <Sheet title={t('task.title')} onClose={onClose}>
+    <>
+    <Sheet title={t(hasSteps ? 'plan.title' : 'task.title')} onClose={onClose}>
       {edit === 'deny' ? (
         <p className="task-text">{task.text}</p>
       ) : (
@@ -88,8 +97,10 @@ export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClo
         </form>
       )}
 
+      {standard === 'school' && isPublished ? <PlanView task={task} onOpenStep={setStep} /> : null}
+
       <div className="stack">
-        {check !== 'deny' ? (
+        {check !== 'deny' && !hasSteps ? (
           <button
             type="button"
             className="btn btn--quiet btn--block"
@@ -119,7 +130,7 @@ export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClo
             {t(remove === 'do' ? 'task.remove' : 'task.removeSuggest')}
           </button>
         ) : null}
-        {edit === 'deny' && check === 'deny' && remove === 'deny' ? <p className="note">{t('task.readOnly')}</p> : null}
+        {edit === 'deny' && check === 'deny' && remove === 'deny' && !hasSteps ? <p className="note">{t('task.readOnly')}</p> : null}
       </div>
 
       {tale ? (
@@ -140,5 +151,8 @@ export function TaskSheet({ id, onClose }: { readonly id: TaskId; readonly onClo
         </section>
       ) : null}
     </Sheet>
+    {/* A sibling, not a child: two dialogs, one on top of the other. */}
+    {step ? <StepSheet id={step} onClose={() => setStep(null)} /> : null}
+    </>
   );
 }

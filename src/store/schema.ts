@@ -4,11 +4,18 @@
  * Stored data is versioned (`schema`). Permissions are stored as readable atom
  * names, never as bit masks, so the in-memory representation can change
  * without a migration. Anything that does not decode is reported, not guessed.
+ *
+ * Schema history
+ *   1  tasks and people, one household
+ *   2  steps (plans), a standard per workspace ("home" or "school"), and the
+ *      "see" permission. Schema 1 data is upgraded on read: it becomes a
+ *      "home" workspace where everyone keeps seeing everything.
  */
 import {
   BatchId,
   HUES,
   PersonId,
+  StepId,
   SuggestionId,
   TaskId,
   fromAtoms,
@@ -23,6 +30,8 @@ import {
   type Perms,
   type Person,
   type Resolution,
+  type StandardId,
+  type Step,
   type Suggestion,
   type Task,
   type Version,
@@ -30,7 +39,7 @@ import {
 } from '../core';
 import { err, ok, type Result } from '../core/result';
 
-export const SCHEMA = 1;
+export const SCHEMA = 2;
 
 export interface Persisted {
   readonly schema: number;
@@ -57,6 +66,18 @@ const taskOut = (t: Task): Json => ({
   createdBy: t.createdBy,
 });
 
+const stepOut = (s: Step): Json => ({
+  id: s.id,
+  task: s.task,
+  n: s.n,
+  text: s.text,
+  who: s.who,
+  after: [...s.after],
+  done: s.done,
+  createdAt: s.createdAt,
+  createdBy: s.createdBy,
+});
+
 function changeOut(c: Change): Json {
   switch (c.op) {
     case 'task.add':
@@ -66,6 +87,17 @@ function changeOut(c: Change): Json {
       return { op: c.op, id: c.id, from: c.from, to: c.to };
     case 'task.check':
       return { op: c.op, id: c.id, from: c.from, to: c.to };
+    case 'step.add':
+    case 'step.remove':
+      return { op: c.op, step: stepOut(c.step) };
+    case 'step.edit':
+      return { op: c.op, id: c.id, from: c.from, to: c.to };
+    case 'step.check':
+      return { op: c.op, id: c.id, from: c.from, to: c.to };
+    case 'step.assign':
+      return { op: c.op, id: c.id, from: c.from, to: c.to };
+    case 'step.deps':
+      return { op: c.op, id: c.id, from: [...c.from], to: [...c.to] };
     case 'person.add':
     case 'person.remove':
       return { op: c.op, person: personOut(c.person) };
@@ -109,6 +141,7 @@ export function encode(data: WorkspaceData, rev: number, savedAt: number): Persi
     savedAt,
     workspace: {
       id: data.id,
+      standard: data.standard,
       log: data.log.map(versionOut),
       suggestions: data.suggestions.map(suggestionOut),
     },
@@ -140,6 +173,8 @@ function perms(x: unknown, path: string): Perms {
   return fromAtoms(arr(x, path).map((a, i) => (isAtom(a) ? a : fail(`${path}[${i}]`, 'a permission name'))));
 }
 
+const stepIds = (x: unknown, path: string): StepId[] => arr(x, path).map((v, i) => StepId(str(v, `${path}[${i}]`)));
+
 function person(x: unknown, path: string): Person {
   const o = obj(x, path);
   return {
@@ -161,6 +196,21 @@ function task(x: unknown, path: string): Task {
   };
 }
 
+function step(x: unknown, path: string): Step {
+  const o = obj(x, path);
+  return {
+    id: StepId(str(o.id, `${path}.id`)),
+    task: TaskId(str(o.task, `${path}.task`)),
+    n: num(o.n, `${path}.n`),
+    text: str(o.text, `${path}.text`),
+    who: PersonId(str(o.who, `${path}.who`)),
+    after: stepIds(o.after, `${path}.after`),
+    done: bool(o.done, `${path}.done`),
+    createdAt: num(o.createdAt, `${path}.createdAt`),
+    createdBy: PersonId(str(o.createdBy, `${path}.createdBy`)),
+  };
+}
+
 function change(x: unknown, path: string): Change {
   const o = obj(x, path);
   const op = str(o.op, `${path}.op`);
@@ -172,6 +222,22 @@ function change(x: unknown, path: string): Change {
       return { op, id: TaskId(str(o.id, `${path}.id`)), from: str(o.from, `${path}.from`), to: str(o.to, `${path}.to`) };
     case 'task.check':
       return { op, id: TaskId(str(o.id, `${path}.id`)), from: bool(o.from, `${path}.from`), to: bool(o.to, `${path}.to`) };
+    case 'step.add':
+    case 'step.remove':
+      return { op, step: step(o.step, `${path}.step`) };
+    case 'step.edit':
+      return { op, id: StepId(str(o.id, `${path}.id`)), from: str(o.from, `${path}.from`), to: str(o.to, `${path}.to`) };
+    case 'step.check':
+      return { op, id: StepId(str(o.id, `${path}.id`)), from: bool(o.from, `${path}.from`), to: bool(o.to, `${path}.to`) };
+    case 'step.assign':
+      return {
+        op,
+        id: StepId(str(o.id, `${path}.id`)),
+        from: PersonId(str(o.from, `${path}.from`)),
+        to: PersonId(str(o.to, `${path}.to`)),
+      };
+    case 'step.deps':
+      return { op, id: StepId(str(o.id, `${path}.id`)), from: stepIds(o.from, `${path}.from`), to: stepIds(o.to, `${path}.to`) };
     case 'person.add':
     case 'person.remove':
       return { op, person: person(o.person, `${path}.person`) };
@@ -219,6 +285,7 @@ function origin(x: unknown, path: string): Origin {
 }
 
 const STATUSES: readonly BatchStatus[] = ['pending', 'withdrawn', 'declined', 'applied', 'skipped'];
+const STANDARD_IDS: readonly StandardId[] = ['home', 'school'];
 
 function batch(x: unknown, path: string): Batch {
   const o = obj(x, path);
@@ -266,9 +333,47 @@ function version(x: unknown, path: string): Version {
   };
 }
 
-/** Upgrade older stored shapes step by step. Schema 1 is the first, so there is nothing to do yet. */
+/* ---------------------------------------------------------------- migrate */
+
+/** Add "see" to every stored permission list: in schema 1, everyone on a list saw all of it. */
+function withSee(changes: unknown): unknown {
+  if (!Array.isArray(changes)) return changes;
+  const addSee = (p: unknown) => (Array.isArray(p) && !p.includes('see') ? [...p, 'see'] : p);
+  return changes.map((c) => {
+    if (typeof c !== 'object' || c === null) return c;
+    const o = c as Record<string, unknown>;
+    if ((o.op === 'person.add' || o.op === 'person.remove') && typeof o.person === 'object' && o.person !== null) {
+      const p = o.person as Record<string, unknown>;
+      return { ...o, person: { ...p, perms: addSee(p.perms) } };
+    }
+    if (o.op === 'person.perms') return { ...o, from: addSee(o.from), to: addSee(o.to) };
+    return o;
+  });
+}
+
+/** Upgrade older stored shapes step by step, without touching the input. */
 export function migrate(raw: Record<string, unknown>): Record<string, unknown> {
-  return raw;
+  let top = raw;
+  if (top.schema === 1 && typeof top.workspace === 'object' && top.workspace !== null) {
+    const w = top.workspace as Record<string, unknown>;
+    const log = Array.isArray(w.log)
+      ? w.log.map((v) => (typeof v === 'object' && v !== null ? { ...v, changes: withSee((v as Record<string, unknown>).changes) } : v))
+      : w.log;
+    const suggestions = Array.isArray(w.suggestions)
+      ? w.suggestions.map((s) => {
+          if (typeof s !== 'object' || s === null) return s;
+          const so = s as Record<string, unknown>;
+          const batches = Array.isArray(so.batches)
+            ? so.batches.map((b) =>
+                typeof b === 'object' && b !== null ? { ...b, changes: withSee((b as Record<string, unknown>).changes) } : b,
+              )
+            : so.batches;
+          return { ...so, batches };
+        })
+      : w.suggestions;
+    top = { ...top, schema: 2, workspace: { ...w, standard: 'home', log, suggestions } };
+  }
+  return top;
 }
 
 export function decode(raw: unknown): Result<{ data: WorkspaceData; rev: number }, DecodeFailure> {
@@ -279,6 +384,7 @@ export function decode(raw: unknown): Result<{ data: WorkspaceData; rev: number 
     const w = obj(top.workspace, 'workspace');
     const data: WorkspaceData = {
       id: str(w.id, 'workspace.id'),
+      standard: oneOf(w.standard, STANDARD_IDS, 'workspace.standard'),
       log: arr(w.log, 'workspace.log').map((v, i) => version(v, `log[${i}]`)),
       suggestions: arr(w.suggestions, 'workspace.suggestions').map((s, i) => suggestion(s, `suggestions[${i}]`)),
     };

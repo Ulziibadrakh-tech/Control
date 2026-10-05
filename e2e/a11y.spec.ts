@@ -1,7 +1,7 @@
 /** Automated WCAG 2.1 AA checks (axe-core) on every screen, light and dark. */
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { start } from './helpers';
+import { isPhone, openPanel, sheet, start, startSchool } from './helpers';
 
 async function audit(page: Page, label: string) {
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
@@ -31,6 +31,34 @@ for (const scheme of ['light', 'dark'] as const) {
 
       await page.getByRole('link', { name: 'People' }).click();
       await audit(page, 'people');
+    });
+
+    test('school screens pass axe', async ({ page }) => {
+      await startSchool(page, 'Tuya');
+      await audit(page, 'school home');
+
+      await page.locator('.row', { hasText: 'Exam week' }).locator('.row__main').first().click();
+      await audit(page, 'plan sheet');
+      await sheet(page).locator('.srow__main', { hasText: 'Mark the papers' }).click();
+      await audit(page, 'step sheet');
+      await sheet(page).getByRole('button', { name: 'Close', exact: true }).click();
+      await sheet(page).getByRole('button', { name: 'Close', exact: true }).click();
+
+      let scope = await openPanel(page, 'Write');
+      await scope.getByRole('button', { name: 'Break it into steps' }).click();
+      await scope.getByRole('button', { name: 'Add a step' }).click();
+      await audit(page, 'write with steps');
+      if (isPhone(page)) await sheet(page).getByRole('button', { name: 'Close', exact: true }).click();
+
+      scope = await openPanel(page, 'Choose');
+      await audit(page, 'ready-made plans');
+      await scope.getByRole('button', { name: /Field trip/ }).click();
+      await audit(page, 'plan preview');
+      await sheet(page).getByRole('button', { name: 'Cancel' }).click();
+      if (isPhone(page)) await sheet(page).getByRole('button', { name: 'Close', exact: true }).click();
+
+      await page.getByRole('link', { name: 'People' }).click();
+      await audit(page, 'school people');
     });
   });
 }

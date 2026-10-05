@@ -7,9 +7,24 @@
  *                invertSet(compose(A, B)) = compose(invertSet(B), invertSet(A))
  *   normalize    the shortest equivalent change set (see below)
  */
-import { changeEquals, entityOf, invert, isNoop, applyChange, type Change, type Conflict, type EntityKey } from './changes';
+import {
+  applyChange,
+  changeEquals,
+  entityOf,
+  fromCurrent,
+  invert,
+  isNoop,
+  sameStepIdentity,
+  stepDiff,
+  stepHolds,
+  stepWith,
+  type Change,
+  type Conflict,
+  type EntityKey,
+  type StepFieldChange,
+} from './changes';
 import type { State } from './model';
-import { taskEquals, personEquals } from './model';
+import { personEquals, sameIds, stepEquals, taskEquals } from './model';
 import { err, ok, type Result } from './result';
 
 export type ChangeSet = readonly Change[];
@@ -54,8 +69,10 @@ export type Rebased =
  * Adapt one change to a newer state without guessing what anyone meant.
  *
  *  - remove: removes the thing as it is now (its words or tick do not matter)
- *  - edit / check / perms: if the state already says what the change wants,
- *    the change is satisfied and dropped ("make it so" is idempotent)
+ *  - edit / check / assign / waits-for / perms: if the state already says what
+ *    the change wants, the change is satisfied and dropped ("make it so" is
+ *    idempotent); a tick is a "make it so" intent, so it also applies over a
+ *    different starting value
  *  - anything else that no longer fits is a conflict, never an overwrite
  *
  * This is the only place a change is ever adapted. It is used when a
@@ -85,6 +102,22 @@ export function rebaseChange(s: State, c: Change): Rebased {
       const t = s.tasks.get(c.id);
       if (!t) return conflict('missing');
       return t.done === c.to ? satisfied : okc({ op: 'task.check', id: c.id, from: t.done, to: c.to });
+    }
+    case 'step.add':
+      return s.steps.has(c.step.id) ? conflict('exists') : okc(c);
+    case 'step.remove': {
+      const st = s.steps.get(c.step.id);
+      return st ? okc({ op: 'step.remove', step: st }) : satisfied;
+    }
+    case 'step.edit':
+    case 'step.check':
+    case 'step.assign':
+    case 'step.deps': {
+      const st = s.steps.get(c.id);
+      if (!st) return conflict('missing');
+      if (stepHolds(st, c, 'to')) return satisfied;
+      if (stepHolds(st, c, 'from')) return okc(c);
+      return c.op === 'step.check' ? okc(fromCurrent(st, c)) : conflict('differs');
     }
     case 'person.add':
       return s.people.has(c.person.id) ? conflict('exists') : okc(c);
@@ -180,11 +213,27 @@ function reduceGroup(group: readonly Change[]): Change[] {
   return list;
 }
 
-/** Two changes on the same task that touch different fields commute. */
+const STEP_FIELDS = new Set<Change['op']>(['step.edit', 'step.check', 'step.assign', 'step.deps']);
+const isStepField = (c: Change): c is StepFieldChange => STEP_FIELDS.has(c.op);
+
+/** (x → y) then (y → z) on the same field of the same step, as one change (x → z). */
+function chain(a: StepFieldChange, b: Change): StepFieldChange | undefined {
+  switch (a.op) {
+    case 'step.edit':
+      return b.op === 'step.edit' && b.from === a.to ? { ...a, to: b.to } : undefined;
+    case 'step.check':
+      return b.op === 'step.check' && b.from === a.to ? { ...a, to: b.to } : undefined;
+    case 'step.assign':
+      return b.op === 'step.assign' && b.from === a.to ? { ...a, to: b.to } : undefined;
+    case 'step.deps':
+      return b.op === 'step.deps' && sameIds(b.from, a.to) ? { ...a, to: b.to } : undefined;
+  }
+}
+
+/** Two changes on the same task or step that touch different fields commute. */
 function commutes(a: Change, b: Change): boolean {
-  return (
-    (a.op === 'task.edit' && b.op === 'task.check') || (a.op === 'task.check' && b.op === 'task.edit')
-  );
+  if ((a.op === 'task.edit' && b.op === 'task.check') || (a.op === 'task.check' && b.op === 'task.edit')) return true;
+  return isStepField(a) && isStepField(b) && a.op !== b.op;
 }
 
 /**
@@ -219,6 +268,26 @@ function merge(a: Change, b: Change): Change[] | undefined {
       if (a.task.text !== b.task.text) out.push({ op: 'task.edit', id: a.task.id, from: a.task.text, to: b.task.text });
       if (a.task.done !== b.task.done) out.push({ op: 'task.check', id: a.task.id, from: a.task.done, to: b.task.done });
       return out;
+    }
+    case 'step.add':
+      if (isStepField(b) && stepHolds(a.step, b, 'from')) return [{ op: 'step.add', step: stepWith(a.step, b, 'to') }];
+      return undefined;
+    case 'step.edit':
+    case 'step.check':
+    case 'step.assign':
+    case 'step.deps': {
+      // Two changes of the same field in a row become one: (x → y) · (y → z) = (x → z).
+      const chained = chain(a, b);
+      if (chained) return [chained];
+      if (b.op === 'step.remove' && stepHolds(b.step, a, 'to')) return [{ op: 'step.remove', step: stepWith(b.step, a, 'from') }];
+      return undefined;
+    }
+    case 'step.remove': {
+      if (b.op !== 'step.add') return undefined;
+      if (stepEquals(a.step, b.step)) return [];
+      // The same step taken away and put back differently is really a set of field changes.
+      if (!sameStepIdentity(a.step, b.step)) return undefined;
+      return stepDiff(a.step, b.step);
     }
     case 'person.add':
       if (b.op === 'person.perms' && b.from === a.person.perms)

@@ -4,18 +4,21 @@
 
 An 80-year-old woman, on a tablet or a phone. She may have reading glasses, a slight tremor in her hands, and little patience for app conventions, and she is wary of breaking something. If it works for her, it works for everyone.
 
-## Ten rules
+At school the same bar holds: a grandparent ticking a trip slip, a ten-year-old ticking homework, a teacher between lessons. Plans add structure underneath, never more to learn on top. A student who opens the app sees their next steps and taps one.
 
-1. **Very few actions on screen.** Home has Write, Choose, the circles, and Look when a suggestion is waiting. Everything else is one step away.
+## Eleven rules
+
+1. **Very few actions on screen.** Home has Write, Choose, the circles, and Look when a suggestion is waiting. Everything else is one step away. At school, breaking a task down is one folded button under the field, and a plan opens from its row.
 2. **Words, not just icons.** Every button has a text label. Icons only support the words.
 3. **Undo instead of "Are you sure?".** Every action can be taken back from the message that appears, and later from What changed. Only removing a person and starting over ask first.
 4. **Buttons say what will happen.** "Add to the list" or "Suggest adding"; "Undo" or "Suggest undoing". The label comes from the same policy that will decide.
 5. **Nothing moves by itself.** Choose tiles keep their places, because people find buttons by where they were last time. What history teaches shows up as an "Often" mark and as tiles added at the end, never as reordering.
 6. **Big and calm.** Touch targets around 58 px and never under 44 px. Text 18 px or more and never under 16 px; tasks at 23 px. Three text sizes.
-7. **Plain words.** "Suggestion", "What changed", "Can look". Never "branch", "commit", "changeset" or "RBAC".
+7. **Plain words.** "Suggestion", "What changed", "Can look", "Waits for", "Round 2", "Now". Never "branch", "commit", "changeset", "RBAC", "dependency" or "DAG".
 8. **Forgive mistakes.** A double tap adds once and ticks once, and a second tap on a message that has only just appeared is ignored, so a double tap on Undo can't land on Redo. Duplicates are explained next to the field. Conflicts are explained in a sentence ("Anu changed it later").
 9. **Messages wait.** They stay ten seconds and pause while hovered or focused.
 10. **Respect the device.** Light or dark from the system, reduced motion, browser zoom, screen readers, keyboard.
+11. **Plans read as rounds, not as diagrams.** A plan is a list of rounds (Done, Now, Later), not boxes and arrows: rounds answer "what can be done now?" without any diagram-reading. The shape is said in one line ("10 steps in 5 rounds · up to 5 at the same time"), and while building, the cost of a wait is said the moment it is chosen ("Waiting for it adds a round").
 
 ## The look: soft Swiss
 
@@ -77,6 +80,16 @@ Contrast, measured:
 - **Sheet**: the native `<dialog>`; centred on wide screens, a bottom sheet on phones. Always a labelled **Close** button.
 - **Toast**: dark, one line, one action (Undo / Redo / Take back).
 
+Plans add a few more, built from the same parts:
+
+- **Next steps**: a short list of ticks at the top of the list, each with the plan it belongs to ("In “Exam week”"), then a quiet line for the rest ("2 more of your steps wait for others first").
+- **Ring**: on a plan's row, the share of steps done, with the count inside ("6/10"). The row's second line says how many rounds are left and who can act now.
+- **Round**: a heading, a status pill (Done, **Now** in the accent colour, Later) and a rule down the left that turns accent while the round is going.
+- **Step row**: a slightly smaller tick (3 rem, 54 px at Normal size), the words, a face and a name, and what it still waits for. A step that waits has a dashed ring with an hourglass instead of a tick, so it can't be ticked by accident.
+- **Group row**: one step for many people ("Revise · 2 of 3 done") with a chip per person to tick their own.
+- **Wait chips**: in the step editor, numbered chips for "waits for"; pressed chips fill with the accent. A chip that would close a circle is dashed and disabled, with the reason as its title.
+- **Shape line**: a pale accent panel under the steps being written: "3 steps · 2 rounds · 2 can start now", and "At the same time: 2 rounds instead of 3".
+
 ### Motion
 
 Movement only explains a change: the tick pops, a new row gets a fading ring, sheets slide up, toasts rise. Durations are 150–280 ms, and all of it is switched off under reduced motion.
@@ -90,8 +103,8 @@ Movement only explains a change: the tick pops, a new row gets a fading ring, sh
 
 ## Accessibility, checked
 
-- **axe-core WCAG 2.1 A/AA**: no violations on any screen (home, review, settings, What changed, People, welcome), in light and dark, on desktop and phone (`e2e/a11y.spec.ts`).
+- **axe-core WCAG 2.1 A/AA**: no violations on any screen (home, review, settings, What changed, People, welcome, and at school the plan sheet, the step sheet, Write with steps, ready-made plans and a plan preview), in light and dark, on desktop and phone (`e2e/a11y.spec.ts`).
 - **Keyboard**: arrow keys move between Write and Choose; Enter adds; Space ticks; Escape closes a sheet and focus returns to whatever opened it. On every page change, focus moves to the page title.
-- **Screen readers**: each tick is a checkbox named after its task; messages are a polite live region; sheets are labelled dialogs; the progress bar has values; each day in the chart has a label.
+- **Screen readers**: each tick is a checkbox named after its task or step (a chip in a group is named "Revise: Nomin"); messages are a polite live region; sheets are labelled dialogs; rounds are a list with headings; the progress bar has values and each ring a label ("6 of 10 steps done"); each day in the chart has a label.
 - **Forced colours** (Windows high contrast): borders stay visible.
 - **Text size**: rem-based throughout, so the in-app setting and browser zoom both scale the whole layout. Checked up to Largest on a 390 px phone.

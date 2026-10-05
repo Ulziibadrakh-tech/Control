@@ -1,38 +1,60 @@
 /**
  * Permissions as a lattice.
  *
- * An *atom* is one capability, e.g. "suggest:add" (may propose adding a task)
- * or "do:add" (may add a task directly). Atoms are ordered by implication:
- * "do:X" implies "suggest:X" — whoever may do something may also propose it.
+ * An *atom* is one capability. For each action (add, check, edit, remove)
+ * there are four, along two independent axes:
  *
- * A permission state is a set of atoms that is *closed* under implication
- * (a down-set of the implication order). Closed sets form a bounded
- * distributive lattice:
+ *   level   suggest  <  do        (whoever may do something may also propose it)
+ *   scope   own      <  all       (whoever may do it to anything may do it to their own)
  *
- *   join (∨)  = union          — combining roles, or a team's joint ability
- *   meet (∧)  = intersection   — what two roles have in common
- *   NONE      = ∅              — identity of join: grants nothing ("can look")
- *   ALL       = every atom     — top
- *   revoke    = remove atoms and everything that implies them; stays closed
+ *   suggest:X@own  ≤  do:X@own  ≤  do:X
+ *   suggest:X@own  ≤  suggest:X ≤  do:X
  *
- * Join is associative, commutative and idempotent, with NONE as identity, so
- * (Perms, ∨, NONE) is a commutative idempotent monoid. It is deliberately NOT a
- * group: idempotence (a ∨ a = a) rules out inverses. Taking a permission away
- * is `revoke`, a separate operation, not an inverse element. See docs/ALGEBRA.md.
+ * "Own" means a task you created, or a step in your plan or given to you.
+ * All-scope atoms keep their original names ("do:add"), so data saved before
+ * scopes existed still reads the same.
  *
- * Representation: a bitmask (one bit per atom). The algebra is then just
- * bitwise OR / AND, which makes the laws easy to see and cheap to compute.
+ * Three more atoms: `see` (see every task, not only your own part), `approve`
+ * (say OK to suggestions) and `manage` (decide who can do what). Acting on
+ * anyone's things, or approving, implies seeing them: see ≤ suggest:X and
+ * see ≤ approve.
+ *
+ * A permission state is a set of atoms closed downwards under this order (a
+ * down-set). The down-sets of a finite order form a bounded distributive
+ * lattice (Birkhoff):
+ *
+ *   join (∨)  = union          combining roles; a team's joint ability
+ *   meet (∧)  = intersection   what two roles have in common
+ *   NONE      = ∅              identity of join: grants nothing
+ *   ALL       = every atom     top
+ *   revoke    = remove atoms and everything above them; stays a down-set
+ *
+ * (Perms, ∨, NONE) is a commutative idempotent monoid, deliberately NOT a
+ * group: idempotence (a ∨ a = a) rules out inverses. Taking a right away is
+ * `revoke`, a separate operation. See docs/ALGEBRA.md.
+ *
+ * Representation: one bit per atom. Closure and revocation use precomputed
+ * masks of each atom's down-set and up-set, so the algebra is bitwise OR/AND.
  * Storage uses readable atom names, never bit positions.
  */
 
 export const ACTIONS = ['add', 'check', 'edit', 'remove'] as const;
 export type Action = (typeof ACTIONS)[number];
 export type Level = 'suggest' | 'do';
-export type Flag = 'approve' | 'manage';
-export type Atom = `${Level}:${Action}` | Flag;
+export type Scope = 'own' | 'all';
+export type Flag = 'see' | 'approve' | 'manage';
+export type Atom = `${Level}:${Action}` | `${Level}:${Action}@own` | Flag;
 
 /** Bit order. Changing it would only change in-memory masks, never stored data. */
 export const ATOMS: readonly Atom[] = [
+  'suggest:add@own',
+  'suggest:check@own',
+  'suggest:edit@own',
+  'suggest:remove@own',
+  'do:add@own',
+  'do:check@own',
+  'do:edit@own',
+  'do:remove@own',
   'suggest:add',
   'suggest:check',
   'suggest:edit',
@@ -41,32 +63,64 @@ export const ATOMS: readonly Atom[] = [
   'do:check',
   'do:edit',
   'do:remove',
+  'see',
   'approve',
   'manage',
 ];
 
+export const atomFor = (level: Level, action: Action, scope: Scope = 'all'): Atom =>
+  scope === 'all' ? `${level}:${action}` : `${level}:${action}@own`;
+
+/** The covering relation of the atom order: each atom and the atoms directly below it. */
+function below(a: Atom): Atom[] {
+  if (a === 'approve') return ['see'];
+  if (a === 'see' || a === 'manage') return [];
+  const [level, rest] = a.split(':') as [Level, string];
+  const [action, own] = rest.split('@') as [Action, string | undefined];
+  if (own) return level === 'do' ? [atomFor('suggest', action, 'own')] : [];
+  return level === 'do'
+    ? [atomFor('suggest', action, 'all'), atomFor('do', action, 'own')]
+    : [atomFor('suggest', action, 'own'), 'see'];
+}
+
 declare const permsBrand: unique symbol;
-/** A closed set of atoms. Only produced by functions in this module. */
+/** A down-set of atoms. Only produced by functions in this module. */
 export type Perms = number & { readonly [permsBrand]: true };
 
-const bitOf = new Map<Atom, number>(ATOMS.map((a, i) => [a, 1 << i]));
-const bit = (a: Atom): number => bitOf.get(a) ?? 0;
-
-const SUGGEST_MASK = 0b1111; // suggest:add..suggest:remove
-const DO_SHIFT = 4; // do:X sits 4 bits above suggest:X
-const DO_MASK = SUGGEST_MASK << DO_SHIFT;
+const index = new Map<Atom, number>(ATOMS.map((a, i) => [a, i]));
+const bit = (a: Atom): number => {
+  const i = index.get(a);
+  return i === undefined ? 0 : 1 << i;
+};
 const EVERY = (1 << ATOMS.length) - 1;
 
-/** Downward closure: add suggest:X for every do:X. */
-function close(bits: number): Perms {
-  const b = bits & EVERY;
-  return (b | ((b & DO_MASK) >> DO_SHIFT)) as Perms;
+/** DOWN[i]: the atom and everything it implies. UP[i]: the atom and everything that implies it. */
+const DOWN: number[] = ATOMS.map(() => 0);
+const UP: number[] = ATOMS.map(() => 0);
+{
+  const downOf = (a: Atom, seen = new Set<Atom>()): number => {
+    if (seen.has(a)) return 0;
+    seen.add(a);
+    let m = bit(a);
+    for (const b of below(a)) m |= downOf(b, seen);
+    return m;
+  };
+  ATOMS.forEach((a, i) => {
+    DOWN[i] = downOf(a);
+  });
+  ATOMS.forEach((_, i) => {
+    for (let j = 0; j < ATOMS.length; j++) if ((DOWN[j]! >> i) & 1) UP[i]! |= 1 << j;
+  });
 }
 
-/** Upward closure: add do:X for every suggest:X. Used so revocation stays closed. */
-function up(bits: number): number {
-  return bits | ((bits & SUGGEST_MASK) << DO_SHIFT);
+function spread(bits: number, masks: readonly number[]): number {
+  let out = 0;
+  for (let i = 0; i < masks.length; i++) if ((bits >> i) & 1) out |= masks[i]!;
+  return out;
 }
+
+/** Downward closure: add everything each atom implies. */
+const close = (bits: number): Perms => spread(bits & EVERY, DOWN) as Perms;
 
 export const NONE = 0 as Perms;
 export const ALL = close(EVERY);
@@ -82,8 +136,11 @@ export function toAtoms(p: Perms): Atom[] {
 }
 
 export function isAtom(x: unknown): x is Atom {
-  return typeof x === 'string' && bitOf.has(x as Atom);
+  return typeof x === 'string' && index.has(x as Atom);
 }
+
+/** True when `bits` is closed downwards. Every Perms value is; exported for tests. */
+export const isDownSet = (bits: number): boolean => close(bits) === bits;
 
 export const join = (a: Perms, b: Perms): Perms => (a | b) as Perms;
 export const meet = (a: Perms, b: Perms): Perms => (a & b) as Perms;
@@ -96,14 +153,10 @@ export function joinAll(ps: Iterable<Perms>): Perms {
 
 /** Remove `r` and everything that implies it. revoke(p, suggest:add) also removes do:add. */
 export function revoke(p: Perms, r: Perms | Iterable<Atom>): Perms {
-  const rb = typeof r === 'number' ? r : fromAtomsRaw(r);
-  return (p & ~up(rb)) as Perms;
-}
-
-function fromAtomsRaw(atoms: Iterable<Atom>): number {
-  let b = 0;
-  for (const a of atoms) b |= bit(a);
-  return b;
+  let rb = 0;
+  if (typeof r === 'number') rb = r;
+  else for (const a of r) rb |= bit(a);
+  return (p & ~spread(rb, UP)) as Perms;
 }
 
 export const has = (p: Perms, a: Atom): boolean => (p & bit(a)) !== 0;
@@ -111,76 +164,125 @@ export const has = (p: Perms, a: Atom): boolean => (p & bit(a)) !== 0;
 export const covers = (p: Perms, need: Perms): boolean => (p & need) === need;
 /** a ≤ b in the lattice */
 export const leq = (a: Perms, b: Perms): boolean => covers(b, a);
-/** Atoms in `need` that `p` lacks. */
-export const missing = (p: Perms, need: Perms): Atom[] => toAtoms((need & ~p) as Perms);
+/** Atoms in `need` that `p` lacks, without the ones implied by others (the ones worth naming). */
+export function missing(p: Perms, need: Perms): Atom[] {
+  const lacking = toAtoms((need & ~p) as Perms);
+  const impliedByAnother = (a: Atom) => lacking.some((b) => b !== a && (DOWN[index.get(b) ?? 0]! & bit(a)) !== 0);
+  return lacking.filter((a) => !impliedByAnother(a));
+}
 
-export const atomFor = (level: Level, action: Action): Atom => `${level}:${action}`;
 export const single = (a: Atom): Perms => close(bit(a));
 
-/* ---------- Per-action view: the "No / Suggest / Yes" control ---------- */
+/* ---------- Per-action view: the "No / Suggest / Yes" controls ---------- */
 
 export type LevelChoice = 'none' | 'suggest' | 'do';
+const RANK: Record<LevelChoice, number> = { none: 0, suggest: 1, do: 2 };
+const higher = (a: LevelChoice, b: LevelChoice): LevelChoice => (RANK[a] >= RANK[b] ? a : b);
+const lower = (a: LevelChoice, b: LevelChoice): LevelChoice => (RANK[a] <= RANK[b] ? a : b);
 
-export function levelOf(p: Perms, action: Action): LevelChoice {
-  if (has(p, atomFor('do', action))) return 'do';
-  if (has(p, atomFor('suggest', action))) return 'suggest';
+export function levelOf(p: Perms, action: Action, scope: Scope = 'all'): LevelChoice {
+  if (has(p, atomFor('do', action, scope))) return 'do';
+  if (has(p, atomFor('suggest', action, scope))) return 'suggest';
   return 'none';
 }
 
-export function withLevel(p: Perms, action: Action, level: LevelChoice): Perms {
-  const cleared = revoke(p, [atomFor('suggest', action)]);
-  if (level === 'none') return cleared;
-  return join(cleared, single(atomFor(level, action)));
+/**
+ * Set one action's level for one scope, keeping the set a down-set:
+ * raising "anyone's" raises "own" with it, and lowering "own" lowers "anyone's".
+ */
+export function withLevel(p: Perms, action: Action, level: LevelChoice, scope: Scope = 'all'): Perms {
+  const own = levelOf(p, action, 'own');
+  const all = levelOf(p, action, 'all');
+  const nextAll = scope === 'all' ? level : lower(all, level);
+  const nextOwn = scope === 'all' ? higher(own, level) : level;
+  let out = revoke(p, [atomFor('suggest', action, 'own')]);
+  if (nextOwn !== 'none') out = join(out, single(atomFor(nextOwn, action, 'own')));
+  if (nextAll !== 'none') out = join(out, single(atomFor(nextAll, action, 'all')));
+  return out;
 }
 
 export function withFlag(p: Perms, flag: Flag, on: boolean): Perms {
   return on ? join(p, single(flag)) : revoke(p, [flag]);
 }
 
-/* ---------- Named roles: a simple ladder over the lattice ---------- */
+/* ---------- Named roles: a ladder per standard ---------- */
 
-export type PresetId = 'viewer' | 'helper' | 'editor' | 'approver' | 'owner';
+export type StandardId = 'home' | 'school';
+export const STANDARDS: readonly StandardId[] = ['school', 'home'];
+
+export type PresetId =
+  | 'viewer'
+  | 'helper'
+  | 'editor'
+  | 'approver'
+  | 'owner'
+  | 'parent'
+  | 'student'
+  | 'teacher'
+  | 'manager'
+  | 'director';
 export type RoleName = PresetId | 'custom';
 
-const allAt = (level: Level): Perms => fromAtoms(ACTIONS.map((a) => atomFor(level, a)));
+const at = (level: Level, scope: Scope): Atom[] => ACTIONS.map((a) => atomFor(level, a, scope));
 
 /**
- * The ladder is a chain in the lattice: each step is the previous one joined
- * with more atoms, so viewer < helper < editor < approver < owner.
+ * Each ladder is a chain in the lattice: every rung is the previous one joined
+ * with more atoms. Home: one household where everyone sees everything. School:
+ * people below "teacher" only see and act on their own part.
  */
-export const PRESETS: ReadonlyArray<{ readonly id: PresetId; readonly perms: Perms }> = [
-  { id: 'viewer', perms: NONE },
-  { id: 'helper', perms: allAt('suggest') },
-  { id: 'editor', perms: allAt('do') },
-  { id: 'approver', perms: join(allAt('do'), single('approve')) },
-  { id: 'owner', perms: ALL },
-];
+export const LADDERS: Readonly<Record<StandardId, ReadonlyArray<{ readonly id: PresetId; readonly perms: Perms }>>> = {
+  home: [
+    { id: 'viewer', perms: fromAtoms(['see']) },
+    { id: 'helper', perms: fromAtoms(at('suggest', 'all')) },
+    { id: 'editor', perms: fromAtoms(at('do', 'all')) },
+    { id: 'approver', perms: fromAtoms([...at('do', 'all'), 'approve']) },
+    { id: 'owner', perms: ALL },
+  ],
+  school: [
+    { id: 'parent', perms: fromAtoms(['do:check@own']) },
+    { id: 'student', perms: fromAtoms(['do:check@own', 'suggest:add@own']) },
+    { id: 'teacher', perms: fromAtoms([...at('do', 'own'), ...at('suggest', 'all'), 'approve']) },
+    { id: 'manager', perms: fromAtoms([...at('do', 'all'), 'approve']) },
+    { id: 'director', perms: ALL },
+  ],
+};
 
 export function presetPerms(id: PresetId): Perms {
-  return PRESETS.find((p) => p.id === id)?.perms ?? NONE;
+  for (const ladder of Object.values(LADDERS)) {
+    const found = ladder.find((p) => p.id === id);
+    if (found) return found.perms;
+  }
+  return NONE;
 }
 
-export function roleOf(p: Perms): RoleName {
-  return PRESETS.find((x) => x.perms === p)?.id ?? 'custom';
+export function roleOf(p: Perms, standard: StandardId): RoleName {
+  return LADDERS[standard].find((x) => x.perms === p)?.id ?? 'custom';
 }
 
-/** Structured summary for plain-language rendering. */
+/**
+ * The highest rung of the ladder that `p` contains (its floor in the chain),
+ * or null if it contains none. A teacher given one extra right is still a
+ * teacher when a ready-made plan asks for "a teacher".
+ */
+export function rankOf(p: Perms, standard: StandardId): PresetId | null {
+  let best: PresetId | null = null;
+  for (const rung of LADDERS[standard]) if (leq(rung.perms, p)) best = rung.id;
+  return best;
+}
+
+/** Structured summary for plain-language rendering: each action's level for own and anyone's things. */
 export interface PermsSummary {
-  /** Actions this person may do directly. */
-  readonly can: readonly Action[];
-  /** Actions this person may only propose. */
-  readonly suggest: readonly Action[];
+  readonly own: Readonly<Record<Action, LevelChoice>>;
+  readonly all: Readonly<Record<Action, LevelChoice>>;
+  readonly see: boolean;
   readonly approve: boolean;
   readonly manage: boolean;
 }
 
 export function summarize(p: Perms): PermsSummary {
-  return {
-    can: ACTIONS.filter((a) => levelOf(p, a) === 'do'),
-    suggest: ACTIONS.filter((a) => levelOf(p, a) === 'suggest'),
-    approve: has(p, 'approve'),
-    manage: has(p, 'manage'),
-  };
+  const by = (scope: Scope) =>
+    Object.fromEntries(ACTIONS.map((a) => [a, levelOf(p, a, scope)])) as Record<Action, LevelChoice>;
+  return { own: by('own'), all: by('all'), see: has(p, 'see'), approve: has(p, 'approve'), manage: has(p, 'manage') };
 }
 
 /* ---------- Teams: "what can these people accomplish together?" ---------- */
@@ -190,7 +292,7 @@ export const teamPerms = joinAll;
 
 /**
  * The smallest groups whose joint permissions cover `need`.
- * Exhaustive over subsets, smallest size first — fine for household-sized teams.
+ * Exhaustive over subsets, smallest size first — fine for team-sized groups.
  */
 export function smallestTeams<T>(
   people: readonly T[],

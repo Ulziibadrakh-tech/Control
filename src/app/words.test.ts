@@ -7,7 +7,7 @@ import { makeWords, toastFor } from './words';
 describe('messages after an action', () => {
   it('says Undo, then Redo, then Undo again: never "Undone" after a redo', () => {
     const env = fixedEnv(new Date(2026, 9, 5, 15, 30).getTime());
-    let ws: Workspace = sampleWorkspace('en', env.now());
+    let ws: Workspace = sampleWorkspace('home', 'en', env.now());
     const me = [...ws.replay.state.people.values()].find((p) => p.name === 'Dulmaa')!.id;
     const i18n = makeI18n('en');
     const step = (cmd: Command): { o: Outcome; message: string; action: string | undefined; next?: Command } => {

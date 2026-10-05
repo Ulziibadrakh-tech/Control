@@ -6,12 +6,13 @@
 import { ArrowLeft, Lightbulb, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import {
+  ACTIONS,
   activity,
+  atomFor,
   approvers,
   has,
   people,
   promotionHint,
-  roleOf,
   summarize,
   teamPerms,
   withLevel,
@@ -61,7 +62,7 @@ export function PeoplePage() {
                   {p.name}
                   {p.id === me.id ? <span className="tag">{t('people.you')}</span> : null}
                 </p>
-                <p className="person__role">{w.role(roleOf(p.perms))}</p>
+                <p className="person__role">{w.roleName(p.perms)}</p>
                 {w.permsLines(p.perms).map((line, i) => (
                   <p key={i} className="person__desc">
                     {line}
@@ -81,7 +82,13 @@ export function PeoplePage() {
                           run({
                             type: 'setPerms',
                             id: p.id,
-                            perms: hint.actions.reduce((acc, a) => withLevel(acc, a, 'do'), p.perms),
+                            // Trust them with the same reach they suggested with: their own things, or anyone's.
+                            perms: hint.actions.reduce(
+                              (acc, a) => withLevel(acc, a, 'do', has(p.perms, atomFor('suggest', a)) ? 'all' : 'own'),
+                              p.perms,
+                            ),
+                            // What was on screen: if someone changed their role meanwhile, this is refused rather than undone.
+                            from: p.perms,
                           })
                         }
                       >
@@ -133,12 +140,16 @@ function TeamCheck({ everyone }: { readonly everyone: readonly Person[] }) {
   if (team.length < 2) lines = [t('team.pick')];
   else {
     const s = summarize(teamPerms(team.map((p) => p.perms)));
+    const can = ACTIONS.filter((a) => s.all[a] === 'do');
+    const canOwn = ACTIONS.filter((a) => s.all[a] !== 'do' && s.own[a] === 'do');
+    const suggest = ACTIONS.filter((a) => s.all[a] === 'suggest' || (s.all[a] === 'none' && s.own[a] === 'suggest'));
     const who = names(team.map((p) => p.name));
     lines = [];
-    if (s.can.length > 0) lines.push(t('team.can', { names: who, actions: w.actions(s.can) }));
-    if (s.suggest.length > 0) lines.push(t('team.suggest', { actions: w.actions(s.suggest) }));
+    if (can.length > 0) lines.push(t('team.can', { names: who, actions: w.actions(can) }));
+    if (canOwn.length > 0) lines.push(t('team.canOwn', { actions: w.actions(canOwn) }));
+    if (suggest.length > 0) lines.push(t('team.suggest', { actions: w.actions(suggest) }));
     if (s.approve) lines.push(t('team.approve'));
-    else if (s.suggest.length > 0) {
+    else if (suggest.length > 0) {
       const outside = approvers(ws).filter((p) => !picked.includes(p.id));
       if (outside.length > 0) lines.push(t('team.needApprover', { names: either(outside.map((p) => p.name)) }));
     }

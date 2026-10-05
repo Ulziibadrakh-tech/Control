@@ -1,7 +1,7 @@
 /** Who is using Control, text size, language — and the first-run welcome. */
 import { Check } from 'lucide-react';
 import { useState } from 'react';
-import { people, roleOf, type Lang, type Person } from '../../core';
+import { people, type Lang, type Person, type StandardId } from '../../core';
 import { useI18n } from '../../i18n/react';
 import { sampleWorkspace } from '../../store/seed';
 import { usePrefs, useServices, useToast, useWords, useWorkspace } from '../context';
@@ -34,7 +34,7 @@ function WhoPicker({ onPicked }: { readonly onPicked?: () => void }) {
         >
           <Avatar person={p} size="xl" />
           <span className="who__name">{p.name}</span>
-          <span className="who__role">{w.role(roleOf(p.perms))}</span>
+          <span className="who__role">{w.roleName(p.perms)}</span>
           {prefs.me === p.id ? (
             <span className="who__check" aria-hidden="true">
               <Check size={18} strokeWidth={3.25} />
@@ -75,9 +75,9 @@ export function SettingsSheet({ onClose }: { readonly onClose: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const status = store.status();
 
-  const startOver = () => {
+  const startOver = (standard: StandardId) => {
     const current = prefs.me ? store.get().replay.state.people.get(prefs.me)?.name : undefined;
-    const fresh = sampleWorkspace(prefs.lang, Date.now());
+    const fresh = sampleWorkspace(standard, prefs.lang, Date.now());
     store.replace(fresh);
     const same = people(fresh).find((p) => p.name === current) ?? people(fresh)[0];
     setPrefs({ me: same?.id ?? null });
@@ -129,8 +129,11 @@ export function SettingsSheet({ onClose }: { readonly onClose: () => void }) {
           <div className="confirm">
             <p>{t('settings.startOverBody')}</p>
             <div className="confirm__row">
-              <button type="button" className="btn btn--danger" onClick={startOver}>
-                {t('settings.startOverYes')}
+              <button type="button" className="btn btn--danger" onClick={() => startOver('school')}>
+                {t('settings.exampleSchool')}
+              </button>
+              <button type="button" className="btn btn--danger" onClick={() => startOver('home')}>
+                {t('settings.exampleHome')}
               </button>
               <button type="button" className="btn btn--quiet" onClick={() => setConfirming(false)}>
                 {t('common.cancel')}

@@ -49,6 +49,8 @@ export function Sheet({ title, onClose, children, footer, focus = 'title' }: She
       className="sheet"
       aria-labelledby={titleId}
       onCancel={(e) => {
+        // React passes a nested sheet's Escape up through its parents too: only the sheet on top closes.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onCloseRef.current();
       }}

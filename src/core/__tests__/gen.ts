@@ -1,8 +1,8 @@
 /** Generators for property tests: random but always-valid histories. */
 import fc from 'fast-check';
 import { applyChange, type Change } from '../changes';
-import { PersonId, TaskId } from '../ids';
-import { EMPTY_STATE, personEquals, taskEquals, type Person, type State, type Task } from '../model';
+import { PersonId, StepId, TaskId } from '../ids';
+import { canonicalIds, EMPTY_STATE, personEquals, stepEquals, taskEquals, type Person, type State, type Step, type Task } from '../model';
 import { ATOMS, fromAtoms, type Perms } from '../permissions';
 
 export const TEXTS = ['Buy bread', 'Call Anu', 'Walk', 'Pills', 'Water', 'Tea'] as const;
@@ -18,7 +18,7 @@ export interface Intent {
 }
 
 export const intentArb: fc.Arbitrary<Intent> = fc.record({
-  kind: fc.integer({ min: 0, max: 9 }),
+  kind: fc.integer({ min: 0, max: 16 }),
   pick: fc.nat(20),
   text: fc.nat(TEXTS.length - 1),
   flag: fc.boolean(),
@@ -33,6 +33,7 @@ export function counter(prefix = 'x'): () => string {
 /** Things removed earlier, so they can come back under the same id (as undo and "go back" do). */
 export interface Graveyard {
   readonly tasks: Task[];
+  readonly steps: Step[];
   readonly people: Person[];
 }
 
@@ -40,8 +41,12 @@ export interface Graveyard {
 function toChange(s: State, it: Intent, nextId: () => string, gone: Graveyard): Change | null {
   const tasks = [...s.tasks.values()];
   const people = [...s.people.values()];
+  const steps = [...s.steps.values()];
   const task = tasks.length > 0 ? tasks[it.pick % tasks.length] : undefined;
+  const st = steps.length > 0 ? steps[it.pick % steps.length] : undefined;
   const person = people.length > 0 ? people[it.pick % people.length] : undefined;
+  // A few existing step ids to wait for; invariants are not the business of single changes.
+  const someSteps = canonicalIds(steps.filter((_, i) => (it.pick + i) % 3 === 0).map((x) => x.id));
   const text = TEXTS[it.text] ?? 'Tea';
   switch (it.kind) {
     case 0:
@@ -73,6 +78,38 @@ function toChange(s: State, it: Intent, nextId: () => string, gone: Graveyard): 
       if (!old || s.people.has(old.id)) return null;
       return { op: 'person.add', person: it.flag ? old : { ...old, perms: it.perms } };
     }
+    case 10:
+      return task
+        ? {
+            op: 'step.add',
+            step: {
+              id: StepId(nextId()),
+              task: task.id,
+              n: it.pick,
+              text,
+              who: person?.id ?? PersonId('p0'),
+              after: someSteps,
+              done: it.flag,
+              createdAt: it.pick,
+              createdBy: PersonId('p0'),
+            },
+          }
+        : null;
+    case 11:
+      return st ? { op: 'step.remove', step: st } : null;
+    case 12:
+      return st ? { op: 'step.edit', id: st.id, from: st.text, to: text } : null;
+    case 13:
+      return st ? { op: 'step.check', id: st.id, from: st.done, to: it.flag } : null;
+    case 14:
+      return st ? { op: 'step.assign', id: st.id, from: st.who, to: person?.id ?? PersonId(`p${it.text}`) } : null;
+    case 15:
+      return st ? { op: 'step.deps', id: st.id, from: st.after, to: someSteps.filter((d) => d !== st.id) } : null;
+    case 16: {
+      const old = gone.steps.length > 0 ? gone.steps[it.pick % gone.steps.length] : undefined;
+      if (!old || s.steps.has(old.id)) return null;
+      return { op: 'step.add', step: it.flag ? old : { ...old, text, done: !old.done, after: someSteps } };
+    }
     default:
       return { op: 'person.add', person: { id: PersonId(nextId()), name: text, hue: 'sky', perms: it.perms } };
   }
@@ -82,7 +119,7 @@ export function realize(
   s: State,
   intents: readonly Intent[],
   nextId: () => string,
-  gone: Graveyard = { tasks: [], people: [] },
+  gone: Graveyard = { tasks: [], steps: [], people: [] },
 ): { changes: Change[]; end: State } {
   let cur = s;
   const changes: Change[] = [];
@@ -90,6 +127,7 @@ export function realize(
     const c = toChange(cur, it, nextId, gone);
     if (!c) continue;
     if (c.op === 'task.remove') gone.tasks.push(c.task);
+    if (c.op === 'step.remove') gone.steps.push(c.step);
     if (c.op === 'person.remove') gone.people.push(c.person);
     const r = applyChange(cur, c);
     if (!r.ok) throw new Error(`generator produced an invalid change: ${JSON.stringify(c)}`);
@@ -106,20 +144,24 @@ export interface Scenario {
 }
 
 export const scenarioArb: fc.Arbitrary<Scenario> = fc
-  .tuple(fc.array(intentArb, { maxLength: 10 }), fc.array(intentArb, { maxLength: 16 }))
+  .tuple(fc.array(intentArb, { maxLength: 14 }), fc.array(intentArb, { maxLength: 20 }))
   .map(([setup, more]) => {
     const nextId = counter();
-    const gone: Graveyard = { tasks: [], people: [] };
+    const gone: Graveyard = { tasks: [], steps: [], people: [] };
     const start = realize(EMPTY_STATE, setup, nextId, gone).end;
     const { changes, end } = realize(start, more, nextId, gone);
     return { start, changes, end };
   });
 
 export function stateEquals(a: State, b: State): boolean {
-  if (a.tasks.size !== b.tasks.size || a.people.size !== b.people.size) return false;
+  if (a.tasks.size !== b.tasks.size || a.steps.size !== b.steps.size || a.people.size !== b.people.size) return false;
   for (const [id, t] of a.tasks) {
     const u = b.tasks.get(id);
     if (!u || !taskEquals(t, u)) return false;
+  }
+  for (const [id, t] of a.steps) {
+    const u = b.steps.get(id);
+    if (!u || !stepEquals(t, u)) return false;
   }
   for (const [id, p] of a.people) {
     const q = b.people.get(id);

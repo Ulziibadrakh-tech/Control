@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n/react';
 import { usePrefs } from '../context';
 import type { Panel } from '../prefs';
 import { ChoosePanel, WritePanel } from './AddPanels';
+import type { DraftRow } from './PlanEditor';
 import { Sheet } from './Sheet';
 import { TaskList } from './TaskList';
 
@@ -18,8 +19,15 @@ function PanelIcon({ panel }: { readonly panel: Panel }) {
   );
 }
 
+interface Draft {
+  readonly draft: string;
+  readonly setDraft: (s: string) => void;
+  readonly rows: readonly DraftRow[] | null;
+  readonly setRows: (rows: DraftRow[] | null) => void;
+}
+
 /** Wide screens: the two options sit beside the list as tabs. */
-function SideOptions({ draft, setDraft }: { readonly draft: string; readonly setDraft: (s: string) => void }) {
+function SideOptions({ draft, setDraft, rows, setRows }: Draft) {
   const [prefs, setPrefs] = usePrefs();
   const { t } = useI18n();
   const id = useId();
@@ -54,7 +62,7 @@ function SideOptions({ draft, setDraft }: { readonly draft: string; readonly set
         ))}
       </div>
       <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-${panel}`} className="side__panel">
-        {panel === 'write' ? <WritePanel draft={draft} setDraft={setDraft} /> : <ChoosePanel />}
+        {panel === 'write' ? <WritePanel draft={draft} setDraft={setDraft} rows={rows} setRows={setRows} /> : <ChoosePanel />}
       </div>
     </div>
   );
@@ -68,13 +76,15 @@ export function Home({
   readonly onOpenReview: () => void;
 }) {
   const { t } = useI18n();
+  // What is being written survives switching between the side panel and the phone sheet.
   const [draft, setDraft] = useState('');
+  const [rows, setRows] = useState<DraftRow[] | null>(null);
   const [sheet, setSheet] = useState<Panel | null>(null);
 
   return (
     <div className="home">
       <aside className="side" aria-label={t('side.label')}>
-        <SideOptions draft={draft} setDraft={setDraft} />
+        <SideOptions draft={draft} setDraft={setDraft} rows={rows} setRows={setRows} />
       </aside>
 
       <TaskList onOpenTask={onOpenTask} onOpenReview={onOpenReview} />
@@ -101,7 +111,7 @@ export function Home({
           focus={sheet === 'write' ? 'field' : 'title'}
         >
           {sheet === 'write' ? (
-            <WritePanel draft={draft} setDraft={setDraft} onAdded={() => setSheet(null)} />
+            <WritePanel draft={draft} setDraft={setDraft} rows={rows} setRows={setRows} onAdded={() => setSheet(null)} />
           ) : (
             <ChoosePanel />
           )}

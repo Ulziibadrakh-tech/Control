@@ -5,10 +5,10 @@ export const NOW = new Date('2026-10-05T15:30:00+08:00');
 
 export const isPhone = (page: Page): boolean => (page.viewportSize()?.width ?? 1280) < 960;
 
-/** Open the app fresh and pick who is using it. */
-export async function start(page: Page, who = 'Dulmaa'): Promise<void> {
+/** Open the app fresh, with the home or the school example, and pick who is using it. */
+export async function start(page: Page, who = 'Dulmaa', example: 'home' | 'school' = 'home'): Promise<void> {
   await page.clock.setFixedTime(NOW);
-  await page.goto('/');
+  await page.goto(`/?example=${example}`);
   const welcome = page.locator('.welcome');
   const heading = page.getByRole('heading', { level: 1 });
   await expect(welcome.or(page.locator('.top'))).toBeVisible();
@@ -62,3 +62,9 @@ export async function switchTo(page: Page, who: string): Promise<void> {
   await page.locator('dialog[open]').getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('heading', { level: 1 })).toContainText(who);
 }
+
+/** The school example, as one of its people. */
+export const startSchool = (page: Page, who: string): Promise<void> => start(page, who, 'school');
+
+/** The open sheet on top. */
+export const sheet = (page: Page): Locator => page.locator('dialog[open]').last();

@@ -8,13 +8,14 @@
  *   review            a suggestion           what accepting will do, and why
  *   promotionHint     People                 "her last 7 suggestions were all accepted"
  */
-import { findOpenTask } from './model';
-import { isTaskChange, taskIdOf } from './changes';
+import { findOpenTask, isTaskDone, type Person } from './model';
+import { actionOf, isTaskChange, taskIdOf } from './changes';
 import type { TaskFacts } from './history';
 import type { BatchId, PersonId, TaskId } from './ids';
-import { ACTIONS, levelOf, type Action } from './permissions';
-import { actionOf } from './changes';
+import { ACTIONS, atomFor, has, levelOf, type Action } from './permissions';
+import { canSeeTask, seesAll } from './plan';
 import { addDays, daysBetween, startOfDay } from './time';
+import { doneAtOf } from './view';
 import { published, type Workspace } from './workspace';
 
 export interface Progress {
@@ -22,13 +23,16 @@ export interface Progress {
   readonly open: number;
 }
 
-export function progress(ws: Workspace, now: number): Progress {
+/** Tasks done today and still to do, among the tasks this person sees. */
+export function progress(ws: Workspace, now: number, me: Person): Progress {
   const today = startOfDay(now);
+  const pub = published(ws);
   let done = 0;
   let open = 0;
-  for (const t of published(ws).tasks.values()) {
-    if (!t.done) open++;
-    else if ((ws.replay.facts.get(t.id)?.doneAt ?? -1) >= today) done++;
+  for (const t of pub.tasks.values()) {
+    if (!canSeeTask(pub, me, t)) continue;
+    if (!isTaskDone(pub, t)) open++;
+    else if ((doneAtOf(ws, pub, t) ?? -1) >= today) done++;
   }
   return { done, open };
 }
@@ -46,19 +50,33 @@ export interface Week {
   readonly previous: number;
 }
 
-export function week(ws: Workspace, now: number): Week {
+/**
+ * Things done per day: ticked steps, and ticked tasks that have no steps.
+ * Someone who does not see everything counts their own part only.
+ */
+export function week(ws: Workspace, now: number, me: Person): Week {
   const today = startOfDay(now);
   const starts = Array.from({ length: 7 }, (_, i) => addDays(today, i - 6));
   const first = starts[0] ?? today;
   const prevStart = addDays(today, -13);
   const counts = new Map<number, number>();
   let previous = 0;
-  for (const f of ws.replay.facts.values()) {
-    if (!f.done || f.doneAt === null) continue;
-    const d = startOfDay(f.doneAt);
-    if (d > today) continue;
+  const count = (doneAt: number | null) => {
+    if (doneAt === null) return;
+    const d = startOfDay(doneAt);
+    if (d > today) return;
     if (d >= first) counts.set(d, (counts.get(d) ?? 0) + 1);
     else if (d >= prevStart) previous++;
+  };
+  const all = seesAll(me);
+  const owner = (task: TaskId) => ws.replay.facts.get(task)?.createdBy;
+  for (const f of ws.replay.facts.values()) {
+    if (!f.done || (!all && f.createdBy !== me.id)) continue;
+    count(f.doneAt);
+  }
+  for (const f of ws.replay.stepFacts.values()) {
+    if (!f.done || (!all && f.who !== me.id && owner(f.task) !== me.id)) continue;
+    count(f.doneAt);
   }
   const days = starts.map((start) => ({ start, count: counts.get(start) ?? 0 }));
   return { days, total: days.reduce((s, d) => s + d.count, 0), previous };
@@ -116,6 +134,8 @@ export interface Review {
   readonly removed: number;
   readonly edited: number;
   readonly checked: number;
+  /** Changes to steps of plans. */
+  readonly steps: number;
   readonly openNow: number;
   readonly openAfter: number;
   readonly notes: ReadonlyMap<BatchId, readonly BatchNote[]>;
@@ -130,6 +150,7 @@ export function review(ws: Workspace, now: number): Review | null {
   let removed = 0;
   let edited = 0;
   let checked = 0;
+  let steps = 0;
   const notes = new Map<BatchId, BatchNote[]>();
   for (const e of ev.valid) {
     const list: BatchNote[] = [];
@@ -144,17 +165,19 @@ export function review(ws: Workspace, now: number): Review | null {
         if (days >= 2) list.push({ kind: 'age', days });
       } else if (c.op === 'task.edit') edited++;
       else if (c.op === 'task.check') checked++;
+      else if (c.op.startsWith('step.')) steps++;
     }
     notes.set(e.batch.id, list);
   }
-  const countOpen = (tasks: Iterable<{ done: boolean }>) => [...tasks].filter((t) => !t.done).length;
+  const countOpen = (s: typeof pub) => [...s.tasks.values()].filter((t) => !isTaskDone(s, t)).length;
   return {
     added,
     removed,
     edited,
     checked,
-    openNow: countOpen(pub.tasks.values()),
-    openAfter: countOpen(ev.preview.tasks.values()),
+    steps,
+    openNow: countOpen(pub),
+    openAfter: countOpen(ev.preview),
     notes,
   };
 }
@@ -198,6 +221,7 @@ export function promotionHint(ws: Workspace, person: PersonId): { count: number;
   if (!p) return null;
   const s = acceptedStreak(ws, person);
   if (s.count < PROMOTION_STREAK) return null;
-  const lacking = s.actions.filter((a) => levelOf(p.perms, a) !== 'do');
+  // Judged at the reach they suggested with: anyone's things if they could suggest those, else their own.
+  const lacking = s.actions.filter((a) => levelOf(p.perms, a, has(p.perms, atomFor('suggest', a)) ? 'all' : 'own') !== 'do');
   return lacking.length > 0 ? { count: s.count, actions: lacking } : null;
 }

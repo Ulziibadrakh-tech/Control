@@ -41,7 +41,7 @@ describe('direct changes', () => {
     const w = world();
     expect(refusal(w.run(PersonId('stranger'), { type: 'add', text: 'x' }))).toBe('not-a-member');
     const o = w.run(w.people.bold, { type: 'add', text: 'x' });
-    expect(o.kind === 'refused' && o.refusal.code === 'not-allowed' && o.refusal.missing).toEqual(['suggest:add']);
+    expect(o.kind === 'refused' && o.refusal.code === 'not-allowed' && o.refusal.missing).toEqual(['suggest:add@own']);
   });
 
   it('rebuilds exactly the same state from the stored log', () => {

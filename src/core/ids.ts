@@ -9,11 +9,13 @@ declare const brand: unique symbol;
 export type Brand<T, B extends string> = T & { readonly [brand]: B };
 
 export type TaskId = Brand<string, 'TaskId'>;
+export type StepId = Brand<string, 'StepId'>;
 export type PersonId = Brand<string, 'PersonId'>;
 export type SuggestionId = Brand<string, 'SuggestionId'>;
 export type BatchId = Brand<string, 'BatchId'>;
 
 export const TaskId = (s: string): TaskId => s as TaskId;
+export const StepId = (s: string): StepId => s as StepId;
 export const PersonId = (s: string): PersonId => s as PersonId;
 export const SuggestionId = (s: string): SuggestionId => s as SuggestionId;
 export const BatchId = (s: string): BatchId => s as BatchId;

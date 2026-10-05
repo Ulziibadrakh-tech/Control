@@ -5,6 +5,8 @@ export * from './permissions';
 export * from './model';
 export * from './changes';
 export * from './changeset';
+export * from './poset';
+export * from './plan';
 export * from './history';
 export * from './suggestions';
 export * from './policy';

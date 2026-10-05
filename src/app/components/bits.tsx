@@ -1,9 +1,14 @@
-/** Small shared pieces: avatars, the progress bar, tile icons. */
+/** Small shared pieces: avatars, the progress bar and ring, tile icons. */
 import {
+  BookOpen,
+  Bus,
+  ClipboardCheck,
   CookingPot,
   Footprints,
   GlassWater,
   HeartPulse,
+  Music,
+  NotebookPen,
   PencilLine,
   Phone,
   Pill,
@@ -13,6 +18,7 @@ import {
   Sparkles,
   Sprout,
   Stethoscope,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import type { IconName, Person } from '../../core';
@@ -56,9 +62,44 @@ const ICONS: Record<IconName, LucideIcon> = {
   rest: Sofa,
   heart: HeartPulse,
   pen: PencilLine,
+  meeting: Users,
+  exam: ClipboardCheck,
+  homework: BookOpen,
+  trip: Bus,
+  concert: Music,
+  lesson: NotebookPen,
 };
 
 export function TileIcon({ name }: { readonly name: IconName }) {
   const Icon = ICONS[name];
   return <Icon aria-hidden="true" size={26} strokeWidth={2.25} />;
+}
+
+/**
+ * A plan's progress as a ring with "2/5" inside. Shown where a single task has
+ * its tick circle, so a plan reads as "in progress" at a glance; it is not a
+ * button (a plan is ticked off step by step).
+ */
+export function Ring({ done, total, label }: { readonly done: number; readonly total: number; readonly label: string }) {
+  const r = 20;
+  const c = 2 * Math.PI * r;
+  const part = total > 0 ? done / total : 0;
+  return (
+    <span className="ring" role="img" aria-label={label} data-done={done === total || undefined}>
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <circle className="ring__track" cx="24" cy="24" r={r} />
+        <circle
+          className="ring__fill"
+          cx="24"
+          cy="24"
+          r={r}
+          strokeDasharray={`${c * part} ${c}`}
+          transform="rotate(-90 24 24)"
+        />
+      </svg>
+      <span className="ring__text" aria-hidden="true">
+        {done}/{total}
+      </span>
+    </span>
+  );
 }

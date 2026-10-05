@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { dispatch, type Command, type Env, type Outcome, type Person, type Workspace } from '../core';
+import { dispatch, type Command, type Env, type Outcome, type Person, type StandardId, type Workspace } from '../core';
 import { useI18n } from '../i18n/react';
 import type { WorkspaceStore } from '../store/store';
 import type { Prefs, PrefsStore } from './prefs';
@@ -42,6 +42,11 @@ export function usePrefs(): [Prefs, (patch: Partial<Prefs>) => void] {
   const { prefs } = useServices();
   const value = useSyncExternalStore(prefs.subscribe, prefs.get, prefs.get);
   return [value, prefs.set];
+}
+
+/** Which ready-made setup this workspace follows ("school" or "home"). */
+export function useStandard(): StandardId {
+  return useWorkspace().data.standard;
 }
 
 /** The person using the app, if they are (still) on the list. */

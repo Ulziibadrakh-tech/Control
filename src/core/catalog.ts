@@ -1,13 +1,22 @@
 /**
  * Ready-made things to choose instead of typing.
  *
- * Tiles never move: elderly users find buttons by where they were last time,
- * so the catalog keeps a fixed order. What history teaches is shown without
- * reordering: the most used tiles get an "often" mark, and things a person has
- * written by hand more than once appear in their own group at the end.
+ * Home: single tasks as tiles. Tiles never move: elderly users find buttons
+ * by where they were last time, so the catalog keeps a fixed order. What
+ * history teaches is shown without reordering: the most used tiles get an
+ * "often" mark, and things a person has written by hand more than once appear
+ * in their own group at the end.
+ *
+ * School: ready-made plans, already broken into steps with as few waits as
+ * the work allows. Each step asks for a role; choosing a plan fills in people
+ * with that role, and "each" steps become one step per person (every student
+ * revises on their own, at the same time).
  */
-import { cleanText, findOpenTask } from './model';
-import { preview, type Workspace } from './workspace';
+import type { PersonId } from './ids';
+import { cleanText, findOpenTask, type Person } from './model';
+import { rankOf, type PresetId } from './permissions';
+import { shapeOf, type Shape } from './plan';
+import { preview, type DraftStep, type Workspace } from './workspace';
 
 export type Lang = 'en' | 'mn';
 
@@ -24,7 +33,13 @@ export type IconName =
   | 'tidy'
   | 'rest'
   | 'heart'
-  | 'pen';
+  | 'pen'
+  | 'meeting'
+  | 'exam'
+  | 'homework'
+  | 'trip'
+  | 'concert'
+  | 'lesson';
 
 export interface CatalogItem {
   readonly key: string;
@@ -118,4 +133,176 @@ export function choices(ws: Workspace, lang: Lang, opts: { minOwnUses?: number; 
   );
   const mark = (c: Choice): Choice => (oftenKeys.has(c.key) ? { ...c, often: true } : c);
   return { catalog: catalog.map(mark), own: own.map(mark) };
+}
+
+/* ------------------------------------------------------- school plans */
+
+export type RoleKey = Extract<PresetId, 'director' | 'manager' | 'teacher' | 'student' | 'parent'>;
+
+export interface TemplateStep {
+  readonly key: string;
+  readonly text: Readonly<Record<Lang, string>>;
+  readonly role: RoleKey;
+  /** One step for every person with this role, all at the same time. */
+  readonly each?: boolean;
+  readonly after: readonly string[];
+}
+
+export interface PlanTemplate {
+  readonly key: string;
+  readonly icon: IconName;
+  readonly title: Readonly<Record<Lang, string>>;
+  readonly steps: readonly TemplateStep[];
+}
+
+const step = (key: string, en: string, mn: string, role: RoleKey, after: string[] = [], each = false): TemplateStep => ({
+  key,
+  text: { en, mn },
+  role,
+  after,
+  ...(each ? { each } : {}),
+});
+
+/** Fixed order, like the home tiles. Waits only where the work really needs them. */
+export const PLANS: readonly PlanTemplate[] = [
+  {
+    key: 'parents',
+    icon: 'meeting',
+    title: { en: 'Parent meeting', mn: 'Эцэг эхийн хурал' },
+    steps: [
+      step('date', 'Set the date', 'Хурлын өдрийг товлох', 'manager'),
+      step('progress', 'Prepare each student’s progress', 'Сурагч бүрийн явцыг бэлтгэх', 'teacher'),
+      step('hall', 'Book the hall', 'Танхим захиалах', 'manager', ['date']),
+      step('invite', 'Write and send the invitation', 'Урилга бичиж илгээх', 'teacher', ['date']),
+      step('confirm', 'Say whether you can come', 'Ирэх эсэхээ мэдэгдэх', 'parent', ['invite'], true),
+      step('hold', 'Hold the meeting', 'Хурлаа хийх', 'teacher', ['hall', 'progress', 'confirm']),
+    ],
+  },
+  {
+    key: 'exam',
+    icon: 'exam',
+    title: { en: 'Exam week', mn: 'Шалгалтын долоо хоног' },
+    steps: [
+      step('questions', 'Write the questions', 'Шалгалтын асуулт бэлтгэх', 'teacher'),
+      step('rooms', 'Book the rooms', 'Анги танхим хуваарилах', 'manager'),
+      step('timetable', 'Tell students the timetable', 'Хуваарийг сурагчдад мэдэгдэх', 'teacher'),
+      step('check', 'Check the questions', 'Асуултыг хянах', 'manager', ['questions']),
+      step('revise', 'Revise', 'Давтлага хийх', 'student', ['timetable'], true),
+      step('print', 'Print the papers', 'Материал хэвлэх', 'teacher', ['check']),
+      step('hold', 'Hold the exam', 'Шалгалт авах', 'teacher', ['rooms', 'print', 'revise']),
+      step('mark', 'Mark the papers', 'Дүн гаргах', 'teacher', ['hold']),
+    ],
+  },
+  {
+    key: 'homework',
+    icon: 'homework',
+    title: { en: 'Homework', mn: 'Гэрийн даалгавар' },
+    steps: [
+      step('give', 'Give the homework', 'Даалгавар өгөх', 'teacher'),
+      step('do', 'Do the homework', 'Даалгавраа хийх', 'student', ['give'], true),
+      step('check', 'Check the homework', 'Даалгавар шалгах', 'teacher', ['do']),
+    ],
+  },
+  {
+    key: 'trip',
+    icon: 'trip',
+    title: { en: 'Field trip', mn: 'Аялал' },
+    steps: [
+      step('place', 'Choose the place and date', 'Газар, өдрөө сонгох', 'teacher'),
+      step('kit', 'Pack the first-aid kit', 'Анхны тусламжийн хэрэгсэл бэлтгэх', 'teacher'),
+      step('approve', 'Approve the trip', 'Аяллыг зөвшөөрөх', 'director', ['place']),
+      step('bus', 'Book the bus', 'Автобус захиалах', 'manager', ['approve']),
+      step('slip', 'Sign the permission slip', 'Зөвшөөрлийн хуудсанд гарын үсэг зурах', 'parent', ['approve'], true),
+      step('go', 'Go on the trip', 'Аялалдаа гарах', 'teacher', ['bus', 'slip', 'kit']),
+    ],
+  },
+  {
+    key: 'concert',
+    icon: 'concert',
+    title: { en: 'School concert', mn: 'Сургуулийн тоглолт' },
+    steps: [
+      step('programme', 'Choose the programme', 'Хөтөлбөрөө сонгох', 'teacher'),
+      step('decorate', 'Decorate the hall', 'Танхим чимэглэх', 'manager'),
+      step('rehearse', 'Rehearse', 'Бэлтгэл хийх', 'student', ['programme'], true),
+      step('invite', 'Invite the parents', 'Эцэг эхчүүдийг урих', 'teacher', ['programme']),
+      step('show', 'Hold the concert', 'Тоглолтоо хийх', 'director', ['rehearse', 'decorate', 'invite']),
+    ],
+  },
+  {
+    key: 'lesson',
+    icon: 'lesson',
+    title: { en: 'Lesson plan check', mn: 'Хичээлийн төлөвлөгөө хянах' },
+    steps: [
+      step('write', 'Write the lesson plan', 'Хичээлийн төлөвлөгөө бичих', 'teacher'),
+      step('review', 'Review the plan', 'Төлөвлөгөөг хянах', 'manager', ['write']),
+      step('fix', 'Make the corrections', 'Засвар оруулах', 'teacher', ['review']),
+      step('sign', 'Sign it off', 'Батлах', 'director', ['fix']),
+    ],
+  },
+];
+
+/** People whose role (their highest rung on the ladder) is exactly this one. */
+export function peopleWithRole(ws: Workspace, role: RoleKey): Person[] {
+  return [...ws.replay.state.people.values()].filter((p) => rankOf(p.perms, ws.data.standard) === role);
+}
+
+/** Who a ready-made step goes to: me if it is my role, otherwise the first person with it, otherwise me. */
+export function defaultAssignee(ws: Workspace, role: RoleKey, me: PersonId): PersonId {
+  const mine = ws.replay.state.people.get(me);
+  if (mine && rankOf(mine.perms, ws.data.standard) === role) return me;
+  return peopleWithRole(ws, role)[0]?.id ?? me;
+}
+
+export interface PlanDraftStep extends DraftStep {
+  /** The template step it came from. */
+  readonly from: string;
+  readonly role: RoleKey;
+  /** True for one of the copies of an "each" step. */
+  readonly each: boolean;
+}
+
+/**
+ * Turn a ready-made plan into draft steps for these people. "Each" steps become
+ * one copy per person with the role; whoever waited for the step waits for all
+ * the copies. A role nobody has drops out, and so do waits for it.
+ */
+export function planDraft(ws: Workspace, t: PlanTemplate, lang: Lang, me: PersonId): PlanDraftStep[] {
+  const copies = new Map<string, string[]>();
+  const out: PlanDraftStep[] = [];
+  for (const s of t.steps) {
+    if (s.each) {
+      const people = peopleWithRole(ws, s.role);
+      copies.set(
+        s.key,
+        people.map((p) => `${s.key}:${p.id}`),
+      );
+      for (const p of people) out.push({ key: `${s.key}:${p.id}`, from: s.key, role: s.role, each: true, text: s.text[lang], who: p.id, after: s.after });
+    } else {
+      copies.set(s.key, [s.key]);
+      out.push({ key: s.key, from: s.key, role: s.role, each: false, text: s.text[lang], who: defaultAssignee(ws, s.role, me), after: s.after });
+    }
+  }
+  return out.map((d) => ({ ...d, after: d.after.flatMap((k) => copies.get(k) ?? []) }));
+}
+
+export interface PlanChoice {
+  readonly key: string;
+  readonly title: string;
+  readonly icon: IconName;
+  readonly shape: Shape;
+  readonly onList: boolean;
+}
+
+export function planChoices(ws: Workspace, lang: Lang, me: PersonId): PlanChoice[] {
+  const view = preview(ws);
+  return PLANS.map((t) => {
+    const draft = planDraft(ws, t, lang, me);
+    return {
+      key: t.key,
+      title: t.title[lang],
+      icon: t.icon,
+      shape: shapeOf(draft.map((d) => ({ id: d.key, after: d.after }))),
+      onList: findOpenTask(view, t.title[lang]) !== undefined,
+    };
+  });
 }

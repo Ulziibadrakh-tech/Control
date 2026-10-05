@@ -13,10 +13,11 @@ describe('insights', () => {
     w.ok(dulmaa, { type: 'add', text: 'A' });
     w.ok(dulmaa, { type: 'add', text: 'B' });
     w.ok(dulmaa, { type: 'check', id: w.taskId('A'), done: true });
-    expect(progress(w.ws, w.env.now())).toEqual({ done: 1, open: 1 });
+    const me = w.ws.replay.state.people.get(dulmaa)!;
+    expect(progress(w.ws, w.env.now(), me)).toEqual({ done: 1, open: 1 });
     // Tomorrow, yesterday's done task is tidied away.
     const tomorrow = startOfDay(w.env.now()) + DAY + 9 * HOUR;
-    expect(progress(w.ws, tomorrow)).toEqual({ done: 0, open: 1 });
+    expect(progress(w.ws, tomorrow, me)).toEqual({ done: 0, open: 1 });
     expect(listView(w.ws, dulmaa, tomorrow).doneEarlier).toBe(1);
   });
 
@@ -28,7 +29,7 @@ describe('insights', () => {
       w.ok(dulmaa, { type: 'check', id: w.taskId(text), done: true });
       w.later(24);
     }
-    const wk = week(w.ws, w.env.now());
+    const wk = week(w.ws, w.env.now(), w.ws.replay.state.people.get(dulmaa)!);
     expect(wk.days.length).toBe(7);
     expect(wk.total).toBe(3);
     expect(wk.days.at(-1)?.count).toBe(0);
@@ -97,7 +98,7 @@ describe('insights', () => {
     w.ok(dulmaa, { type: 'add', text: 'Tea' });
     const items = timeline(w.ws, dulmaa);
     const first = items[0];
-    expect(first?.type === 'version' && first.phrases).toEqual([{ kind: 'added', text: 'Tea' }]);
+    expect(first?.type === 'version' && first.phrases).toEqual([{ kind: 'added', text: 'Tea', steps: 0 }]);
     expect(first?.type === 'version' && first.undo).toEqual({ kind: 'do' });
     const forBold = timeline(w.ws, bold)[0];
     expect(forBold?.type === 'version' && forBold.undo.kind).toBe('no');

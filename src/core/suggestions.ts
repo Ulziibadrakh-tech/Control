@@ -9,12 +9,14 @@
  *
  * A suggestion is evaluated against the current published state every time it
  * is looked at. Each batch is rebased (see rebaseChange) and applied
- * all-or-nothing; batches that no longer fit are reported as out of date and
- * skipped. Nobody ever has to resolve a merge by hand.
+ * all-or-nothing; batches that no longer fit, or that would break a plan's
+ * rules, are reported as out of date and skipped. Nobody ever has to resolve
+ * a merge by hand.
  */
 import { rebaseSet, type ChangeSet, type SetConflict } from './changeset';
 import type { BatchId, PersonId, SuggestionId } from './ids';
 import type { State } from './model';
+import { planProblem, touchedTasks, type PlanProblem } from './plan';
 
 export type Origin =
   | { readonly type: 'action' }
@@ -54,7 +56,10 @@ export interface EvaluatedBatch {
 
 export interface StaleBatch {
   readonly batch: Batch;
-  readonly conflict: SetConflict;
+  /** The change that no longer fits, if that is why. */
+  readonly conflict: SetConflict | null;
+  /** The plan rule it would break, if that is why. */
+  readonly problem: PlanProblem | null;
 }
 
 export interface Evaluation {
@@ -74,12 +79,17 @@ export function evaluate(published: State, s: Suggestion): Evaluation {
   const stale: StaleBatch[] = [];
   for (const batch of pendingBatches(s)) {
     const r = rebaseSet(preview, batch.changes);
-    if (r.ok) {
-      preview = r.value.state;
-      valid.push({ batch, changes: r.value.changes });
-    } else {
-      stale.push({ batch, conflict: r.error });
+    if (!r.ok) {
+      stale.push({ batch, conflict: r.error, problem: null });
+      continue;
     }
+    const problem = planProblem(r.value.state, touchedTasks(r.value.changes, preview, r.value.state));
+    if (problem) {
+      stale.push({ batch, conflict: null, problem });
+      continue;
+    }
+    preview = r.value.state;
+    valid.push({ batch, changes: r.value.changes });
   }
   return { preview, valid, stale };
 }

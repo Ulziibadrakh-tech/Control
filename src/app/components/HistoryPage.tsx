@@ -77,9 +77,12 @@ export function HistoryPage() {
 
 function WeekCard() {
   const ws = useWorkspace();
+  const me = useMe();
   const now = useNow();
   const { t, weekdayShort } = useI18n();
-  const wk = useMemo(() => week(ws, now), [ws, now]);
+  // Someone who sees only their own part counts only their own part.
+  const wk = useMemo(() => (me ? week(ws, now, me) : null), [ws, now, me]);
+  if (!wk) return null;
   const max = Math.max(1, ...wk.days.map((d) => d.count));
   const today = startOfDay(now);
 
