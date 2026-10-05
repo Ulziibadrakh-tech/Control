@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-single/
+test-results/
+playwright-report/
+blob-report/
+*.local
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

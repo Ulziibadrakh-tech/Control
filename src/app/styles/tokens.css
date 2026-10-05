@@ -1,0 +1,168 @@
+/*
+ * Design tokens. "Soft Swiss": a strict grid, flush-left type and a few
+ * strong rules, softened with warm paper, rounded corners and one rounded
+ * typeface. Every text pair below is checked for contrast (see docs/DESIGN.md):
+ * body text is AAA (7:1+), secondary text 7:1+, the faintest text 5:1, and
+ * control outlines at least 3:1 against what they sit on.
+ */
+
+:root {
+  color-scheme: light;
+
+  --paper: #f6f2ea;
+  --surface: #ffffff;
+  --surface-2: #fbf8f2;
+  --sunk: #eee8dd;
+
+  --ink: #1d2421;
+  --ink-2: #48514c;
+  --ink-3: #5f6964;
+
+  --line: #e3dccf;
+  --control: #857e72;
+
+  --accent: #1c6450;
+  --accent-strong: #154c3d;
+  --accent-ink: #ffffff;
+  --accent-soft: #e1efe8;
+  --accent-line: #a9cdbd;
+
+  --wait: #7e4c00;
+  --wait-ink: #ffffff;
+  --wait-soft: #fcefd6;
+  --wait-line: #e2bd73;
+
+  --danger: #a33a2f;
+  --danger-soft: #fbe8e5;
+  --danger-line: #e7b0a8;
+
+  --backdrop: rgb(29 36 33 / 0.42);
+  --shadow-1: 0 1px 2px rgb(60 45 20 / 0.06), 0 1px 1px rgb(60 45 20 / 0.04);
+  --shadow-2: 0 2px 8px rgb(60 45 20 / 0.08), 0 18px 48px rgb(60 45 20 / 0.14);
+
+  --hue-clay-bg: #f3d5c6;
+  --hue-clay-ink: #6a2d15;
+  --hue-sage-bg: #d2e6d8;
+  --hue-sage-ink: #1f4a35;
+  --hue-sky-bg: #d3e3f2;
+  --hue-sky-ink: #1c4467;
+  --hue-plum-bg: #e5d7ee;
+  --hue-plum-ink: #4d2a63;
+  --hue-ochre-bg: #f2e3b9;
+  --hue-ochre-ink: #5c4407;
+
+  --font: 'Nunito Variable', 'Nunito', ui-rounded, 'SF Pro Rounded', 'Segoe UI', system-ui, sans-serif;
+
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-pill: 999px;
+
+  /* Touch targets: never below 44px; most are ~58px at normal text size. */
+  --tap: 3.25rem;
+  --tap-big: 3.75rem;
+
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --s7: 3rem;
+  --s8: 4rem;
+
+  --fs-hero: clamp(1.85rem, 1.25rem + 2.2vw, 2.7rem);
+  --fs-title: 1.65rem;
+  --fs-task: 1.3rem;
+  --fs-body: 1rem;
+  --fs-small: 0.9rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --paper: #141917;
+    --surface: #1d2321;
+    --surface-2: #212825;
+    --sunk: #28302d;
+    --ink: #f2eee7;
+    --ink-2: #c7cdc9;
+    --ink-3: #a3aca7;
+    --line: #313a36;
+    --control: #7d8782;
+    --accent: #73cba9;
+    --accent-strong: #8fd8bb;
+    --accent-ink: #0d1f18;
+    --accent-soft: #1e3a2f;
+    --accent-line: #2f5c4a;
+    --wait: #f2c46e;
+    --wait-ink: #2a1d05;
+    --wait-soft: #3a2d14;
+    --wait-line: #7a6030;
+    --danger: #f29a8f;
+    --danger-soft: #3b201d;
+    --danger-line: #7a3b33;
+    --backdrop: rgb(0 0 0 / 0.6);
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 2px 8px rgb(0 0 0 / 0.4), 0 18px 48px rgb(0 0 0 / 0.5);
+    --hue-clay-bg: #5a3324;
+    --hue-clay-ink: #f6d9cb;
+    --hue-sage-bg: #284a39;
+    --hue-sage-ink: #d4ebdc;
+    --hue-sky-bg: #253f58;
+    --hue-sky-ink: #d6e6f5;
+    --hue-plum-bg: #45305a;
+    --hue-plum-ink: #eadcf2;
+    --hue-ochre-bg: #50401a;
+    --hue-ochre-ink: #f4e6bf;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --paper: #141917;
+  --surface: #1d2321;
+  --surface-2: #212825;
+  --sunk: #28302d;
+  --ink: #f2eee7;
+  --ink-2: #c7cdc9;
+  --ink-3: #a3aca7;
+  --line: #313a36;
+  --control: #7d8782;
+  --accent: #73cba9;
+  --accent-strong: #8fd8bb;
+  --accent-ink: #0d1f18;
+  --accent-soft: #1e3a2f;
+  --accent-line: #2f5c4a;
+  --wait: #f2c46e;
+  --wait-ink: #2a1d05;
+  --wait-soft: #3a2d14;
+  --wait-line: #7a6030;
+  --danger: #f29a8f;
+  --danger-soft: #3b201d;
+  --danger-line: #7a3b33;
+  --backdrop: rgb(0 0 0 / 0.6);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 2px 8px rgb(0 0 0 / 0.4), 0 18px 48px rgb(0 0 0 / 0.5);
+  --hue-clay-bg: #5a3324;
+  --hue-clay-ink: #f6d9cb;
+  --hue-sage-bg: #284a39;
+  --hue-sage-ink: #d4ebdc;
+  --hue-sky-bg: #253f58;
+  --hue-sky-ink: #d6e6f5;
+  --hue-plum-bg: #45305a;
+  --hue-plum-ink: #eadcf2;
+  --hue-ochre-bg: #50401a;
+  --hue-ochre-ink: #f4e6bf;
+}
+
+/* Text size setting. Everything is sized in rem, so the whole interface grows together. */
+html {
+  font-size: 112.5%;
+}
+html[data-text-size='1'] {
+  font-size: 125%;
+}
+html[data-text-size='2'] {
+  font-size: 143.75%;
+}
